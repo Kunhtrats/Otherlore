@@ -1,0 +1,53 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+const directory = mkdtempSync(join(tmpdir(), 'otherlore-smoke-'));
+const origin = 'http://127.0.0.1:4399';
+const child = spawn(process.execPath, ['scripts/start.mjs'], { env: { ...process.env, PORT: '4399', OTHERLORE_DEMO: 'true', OTHERLORE_DB_PATH: join(directory, 'test.sqlite') }, stdio: ['ignore', 'pipe', 'pipe'] });
+let logs = '';
+child.stdout.on('data', b => logs += b); child.stderr.on('data', b => logs += b);
+const post = (path, fields, source = origin) => fetch(origin + path, { method: 'POST', headers: { origin: source }, body: new URLSearchParams(fields), redirect: 'manual' });
+try {
+  let ready = false;
+  for (let i = 0; i < 60; i++) { try { if ((await fetch(origin)).ok) { ready = true; break; } } catch {} await new Promise(r => setTimeout(r, 200)); }
+  assert.ok(ready, logs);
+  const home = await fetch(origin);
+  assert.equal(home.headers.get('referrer-policy'), 'same-origin', 'Browser form POSTs must retain their same-origin Origin header');
+  const html = await home.text();
+  assert.ok(html.includes('Elara Vey'));
+  assert.equal((await post('/?_action=start', {}, 'https://evil.example')).status, 403);
+  assert.equal((await post('/?_action=start', {}, 'null')).status, 403);
+  const started = await post('/?_action=start', { character: 'starter-character', world: 'starter-world', model: 'demo/offline' });
+  assert.equal(started.status, 302, await started.text());
+  const location = started.headers.get('location');
+  const id = new URL(location, origin).searchParams.get('session');
+  const exported = async () => (await fetch(`${origin}/export?session=${id}`)).json();
+  let data = await exported();
+  assert.equal(data.messages.length, 1);
+  const fields = { session: id, model: 'demo/offline', content: '<script>alert(1)</script> I follow the bell.', last: String(data.messages.at(-1).id) };
+  const sent = await post(`/?session=${id}&_action=send`, fields);
+  assert.equal(sent.status, 200);
+  const rendered = await sent.text();
+  assert.ok(rendered.includes('Offline demo turn saved.'), rendered.slice(-3000));
+  assert.ok(!rendered.includes('<script>alert(1)</script>'));
+  data = await exported();
+  assert.equal(data.messages.length, 3);
+  await post(`/?session=${id}&_action=send`, fields);
+  assert.equal((await exported()).messages.length, 3, 'Duplicate form submission must not duplicate turns');
+  await post(`/?session=${id}&_action=editMemory`, { session: id, facts: '[]', summary: 'The bell calls.' });
+  assert.equal((await exported()).memory.summary, 'The bell calls.');
+  const page = await (await fetch(origin + location)).text();
+  assert.ok(page.includes('The bell calls.'));
+  await post('/?_action=world', { id: 'smoke-world', name: 'Test world', description: 'A quiet harbor.' });
+  await post('/?_action=lore', { id: 'smoke-lore', world: 'smoke-world', name: 'Tide', content: 'The tide rises at noon.', keywords: 'tide, noon', constant: 'on' });
+  const worldPage = await (await fetch(origin + '/?world=smoke-world')).text();
+  assert.ok(worldPage.includes('The tide rises at noon.'));
+  await post('/?_action=character', { id: 'smoke-character', name: 'Test keeper', description: 'Keeper', personality: 'Kind', scenario: 'Harbor', first_message: 'Welcome.', examples: 'You: Hello\nKeeper: Welcome.\n\nYou: Tide?\nKeeper: Noon.' });
+  assert.ok((await (await fetch(origin)).text()).includes('Test keeper'));
+  await post('/?_action=remove', { kind: 'character', id: 'smoke-character' });
+  assert.ok(!(await (await fetch(origin)).text()).includes('Test keeper'));
+  console.log('Smoke passed: SSR, CSRF rejection, session creation, demo chat, escaping, duplicate prevention, memory, export.');
+} catch (error) { console.error(logs); throw error; }
+finally { child.kill(); await new Promise(r => child.once('exit', r)); rmSync(directory, { recursive: true, force: true }); }

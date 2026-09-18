@@ -1,0 +1,91 @@
+---
+import { actions } from 'astro:actions';
+import * as db from '../lib/db';
+import { demo, models } from '../lib/provider';
+import type { Model } from '../lib/domain';
+import '../styles/global.css';
+db.seed();
+const results = [actions.character, actions.world, actions.lore, actions.remove, actions.start, actions.send, actions.memory, actions.editMemory, actions.refresh].map(a => Astro.getActionResult(a));
+const result = results.find(Boolean);
+const started = Astro.getActionResult(actions.start);
+if (started?.data) return Astro.redirect(`/?session=${started.data.session}`);
+let notice = result?.error?.message || (result?.data && 'notice' in result.data ? result.data.notice : '');
+const failed = Boolean(result?.error);
+const characters = db.characters();
+const worlds = db.worlds();
+const sessions = db.sessions();
+const sessionId = Astro.url.searchParams.get('session');
+let active: ReturnType<typeof db.session> | undefined;
+if (sessionId && sessions.some(s => s.id === sessionId)) active = db.session(sessionId);
+let catalog: Model[] = [];
+try { catalog = await models(); } catch (error) { notice ||= error instanceof Error ? error.message : 'Catalog unavailable.'; }
+const edit = characters.find(c => c.id === Astro.url.searchParams.get('character'));
+const world = worlds.find(w => w.id === Astro.url.searchParams.get('world')) || worlds[0];
+const lore = world ? db.loreFor(world.id) : [];
+const loreEdit = lore.find(l => l.id === Astro.url.searchParams.get('lore'));
+let posted: FormData | undefined;
+if (Astro.request.method === 'POST' && failed) {
+  try { posted = await Astro.request.clone().formData(); } catch { /* Astro may have consumed the form body. */ }
+}
+---
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content="Otherlore — local-first roleplay and persistent worlds"/><title>Otherlore · A story that remembers</title></head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <aside class="sidebar">
+      <a class="brand" href="/">✧ Otherlore<span>STORIES BEYOND THE PAGE</span></a>
+      <div class="mode">{demo() ? '◉ Offline demo' : '◉ OpenRouter · free models'}</div>
+      <nav aria-label="Workspace"><a href="/#stories">◈ Your stories</a><a href="/#characters">♧ Characters</a><a href="/#worlds">◎ Worlds & lore</a></nav>
+      <h2 class="eyebrow">RECENT JOURNEYS</h2>
+      {sessions.length === 0 && <p class="muted">Your first adventure is waiting.</p>}
+      {sessions.map(s => <a class:list={['session-link', { selected: s.id === active?.id }]} href={`/?session=${s.id}`}><strong>{characters.find(c => c.id === s.character_id)?.name}</strong><small>{worlds.find(w => w.id === s.world_id)?.name}</small></a>)}
+      <p class="sidebar-foot">Local by design. Yours to imagine.<br/>No subscriptions. No paywalls.</p>
+    </aside>
+    <main id="main">
+      <header class="topbar"><span>YOUR PRIVATE STORY SPACE</span><span>✦ {demo() ? 'No network calls' : 'Prompts leave your device'}</span></header>
+      {notice && <div class:list={['notice', { error: failed }]} role={failed ? 'alert' : 'status'}>{notice}</div>}
+      {active ? <>
+        <section class="chat-heading"><div><p class="eyebrow">{active.world.name}</p><h1>{active.card.name}</h1><p class="muted">{active.card.description}</p></div><a class="button secondary" href={`/export?session=${active.id}`}>↓ Export story</a></section>
+        <div class="chat-layout">
+          <section aria-label="Conversation">
+            <div class="transcript">{active.messages.map(m => <article class:list={['message', m.role]}><h2>{m.role === 'user' ? 'You' : active!.card.name}</h2><p>{m.content}</p></article>)}</div>
+            <form method="POST" action={`${actions.send}&session=${active.id}`} class="composer" data-draft={active.id}>
+              <input type="hidden" name="session" value={active.id}/><input type="hidden" name="last" value={active.messages.at(-1)?.id || 0}/>
+              <label>Your next move<textarea name="content" required maxlength="3000" rows="4" placeholder="Say something, take an action, change the story…">{failed ? posted?.get('content')?.toString() : ''}</textarea></label>
+              <div class="form-row"><label>Model<select name="model" required>{catalog.map(m => <option value={m.id} selected={m.id === active!.model}>{m.id}</option>)}</select></label><button disabled={!catalog.length}>Send turn ↗</button></div>
+              <small class="muted">{demo() ? 'Demo replies are scripted, not AI. Your conversation still persists.' : 'Character, selected lore, memory, and conversation are sent to OpenRouter.'}</small>
+            </form>
+          </section>
+          <aside class="memory-panel panel"><p class="eyebrow">THE WORLD REMEMBERS</p><h2>🧠 Memory ledger</h2><p class="muted">Arc {active.memory.arc} · {active.memory.facts.length} facts</p>
+            {active.memory.facts.map(f => <div class="fact"><small>{f.kind} · {f.subject}</small><p>{f.detail}</p><small>Known by: {f.knownBy.join(', ') || 'nobody'}</small></div>)}
+            {!active.memory.facts.length && <p class="muted">No extracted facts yet. Live extraction runs every four turns; demo memory is edited manually.</p>}
+            <h3>Arc summary</h3><p class="prose">{active.memory.summary || 'Your story is just beginning.'}</p>
+            <form method="POST" action={`${actions.memory}&session=${active.id}`}><input type="hidden" name="session" value={active.id}/><button class="secondary">Update memory</button></form>
+            <details><summary>Edit memory JSON</summary><p class="muted">Each fact needs id, kind, subject, detail, and knownBy (exact character names, or * for public).</p><form method="POST" action={`${actions.editMemory}&session=${active.id}`}><input type="hidden" name="session" value={active.id}/><label>Facts<textarea name="facts" rows="12" required>{JSON.stringify(active.memory.facts, null, 2)}</textarea></label><label>Summary<textarea name="summary" maxlength="2000" rows="5">{active.memory.summary}</textarea></label><button>Save memory</button></form></details>
+            <details><summary>Arc history</summary>{db.arcsFor(active.id).map(a => <p class="prose"><strong>Arc {a.number}</strong><br/>{a.summary || '(No summary)'}</p>)}</details>
+            <form method="POST" action={actions.remove} data-confirm="Permanently delete this session, all messages, and memory? Export it first if needed."><input type="hidden" name="kind" value="session"/><input type="hidden" name="id" value={active.id}/><button class="danger">Delete story</button></form>
+          </aside>
+        </div>
+      </> : <section class="hero" id="stories"><p class="eyebrow">A THOUSAND WORLDS. ONE PLACE TO BEGIN.</p><h1>Every story starts<br/>with <em>what if.</em></h1><p>Create someone unforgettable. Step into a world of your own.<br/>Let the story remember where you’ve been.</p><a class="button" href="#new-story">Begin a journey ↗</a><span class="hero-star" aria-hidden="true">✧</span></section>}
+      <section id="new-story" class="panel"><div class="section-title"><div><p class="eyebrow">OPEN A NEW CHAPTER</p><h2>Begin a journey</h2></div><form method="POST" action={actions.refresh}><button class="secondary">↻ Refresh models</button></form></div><form method="POST" action={actions.start} class="start-grid"><label>Character<select name="character" required>{characters.map(c => <option value={c.id}>{c.name}</option>)}</select></label><label>World<select name="world" required>{worlds.map(w => <option value={w.id}>{w.name}</option>)}</select></label><label>Free model<select name="model" required>{catalog.map(m => <option value={m.id}>{m.id} · {Math.round(m.context/1024)}k</option>)}</select></label><button disabled={!catalog.length || !characters.length || !worlds.length}>Start story ↗</button></form></section>
+      <section id="characters"><div class="section-title"><div><p class="eyebrow">MEET YOUR NEXT CHAPTER</p><h2>Characters</h2></div><span class="muted">{characters.length} in your collection</span></div><div class="cards">{characters.map((c,i) => <article class="card"><div class:list={['portrait', `tone-${i%3}`]} aria-hidden="true">{c.name.slice(0,1)}<span>✧</span></div><div class="card-body"><h3>{c.name}</h3><p>{c.description}</p><a href={`/?character=${c.id}#character-editor`}>Edit character ↗</a></div></article>)}</div>
+        <details id="character-editor" open={Boolean(edit)}><summary>{edit ? `Edit ${edit.name}` : '＋ Create a character'}</summary><form method="POST" action={actions.character} class="editor"><input type="hidden" name="id" value={edit?.id || ''}/><label>Name<input name="name" required maxlength="80" value={edit?.name}/></label><label>Description<textarea name="description" required maxlength="1000">{edit?.description}</textarea></label><label>Personality & voice<textarea name="personality" required maxlength="1000">{edit?.personality}</textarea></label><label>Starting scenario<textarea name="scenario" required maxlength="1000">{edit?.scenario}</textarea></label><label>First message<textarea name="first_message" required maxlength="1500">{edit?.first_message}</textarea></label><label>2–4 example exchanges (separate with a blank line)<textarea name="examples" required maxlength="2000" rows="6">{edit?.example_dialogues.join('\n\n')}</textarea></label><button>Save character</button>{edit && <a href="/#character-editor">Create another instead</a>}</form>{edit && <form method="POST" action={actions.remove} data-confirm="Delete this character? Existing sessions must be deleted first."><input type="hidden" name="kind" value="character"/><input type="hidden" name="id" value={edit.id}/><button class="danger">Delete character</button></form>}</details>
+      </section>
+      <section id="worlds"><div class="section-title"><div><p class="eyebrow">PLACES WORTH GETTING LOST IN</p><h2>Worlds & lore</h2></div></div><div class="world-tabs">{worlds.map(w => <a class="button secondary" href={`/?world=${w.id}#worlds`}>◎ {w.name}</a>)}</div>
+        <div class="world-grid"><div class="panel"><h3>{world?.name || 'Create your first world'}</h3><p class="prose muted">{world?.description}</p><details><summary>{world ? 'Edit world' : 'Create world'}</summary><form method="POST" action={actions.world}><input type="hidden" name="id" value={world?.id || ''}/><label>Name<input name="name" required maxlength="80" value={world?.name}/></label><label>Description<textarea name="description" required maxlength="2000">{world?.description}</textarea></label><button>Save world</button></form>{world && <form method="POST" action={actions.remove} data-confirm="Delete this world and its lore? Existing sessions must be deleted first."><input type="hidden" name="kind" value="world"/><input type="hidden" name="id" value={world.id}/><button class="danger">Delete world</button></form>}</details><details><summary>＋ Another world</summary><form method="POST" action={actions.world}><label>Name<input name="name" required maxlength="80"/></label><label>Description<textarea name="description" required maxlength="2000"></textarea></label><button>Create world</button></form></details></div>
+        <div class="panel"><h3>📖 Lorebook</h3>{lore.map(l => <article class="lore-entry"><small>{l.constant ? 'ALWAYS ACTIVE' : l.keywords.join(' · ')}</small><h4>{l.name}</h4><p>{l.content}</p><a href={`/?world=${world?.id}&lore=${l.id}#lore-editor`}>Edit</a><form method="POST" action={actions.remove} data-confirm="Delete this lore entry?"><input type="hidden" name="kind" value="lore"/><input type="hidden" name="id" value={l.id}/><button class="danger">Delete</button></form></article>)}{world && <details id="lore-editor" open={Boolean(loreEdit)}><summary>{loreEdit ? 'Edit lore entry' : '＋ Add lore entry'}</summary><form method="POST" action={actions.lore}><input type="hidden" name="id" value={loreEdit?.id || ''}/><input type="hidden" name="world" value={world.id}/><label>Title<input name="name" required maxlength="80" value={loreEdit?.name}/></label><label>Keywords, comma-separated<input name="keywords" maxlength="500" value={loreEdit?.keywords.join(', ')}/></label><label>Content<textarea name="content" required maxlength="1000">{loreEdit?.content}</textarea></label><label class="checkbox"><input type="checkbox" name="constant" checked={loreEdit?.constant}/> Always active</label><button>Save lore</button></form></details>}</div></div>
+      </section>
+      <footer>✧ Otherlore · Free, non-commercial, local-first.<br/>Keep this application on localhost. No accounts or public-hosting security are provided.</footer>
+    </main>
+    <script>
+      document.querySelectorAll<HTMLFormElement>('form').forEach(form => {
+        form.addEventListener('submit', event => {
+          if (form.dataset.confirm && !confirm(form.dataset.confirm)) { event.preventDefault(); return; }
+          const button = form.querySelector<HTMLButtonElement>('button[type="submit"], button:not([type])');
+          if (button) { button.disabled = true; button.textContent = 'Working…'; }
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "otherlore",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": { "node": ">=22.13.0" },
+  "dependencies": { "astro": "7.3.3", "@astrojs/node": "11.1.6" },
+  "devDependencies": { "typescript": "^5.9.3", "@astrojs/check": "^0.9.9", "@types/node": "^24.0.0" },
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1",
+    "check": "astro check",
+    "build": "astro build",
+    "start": "node --env-file-if-exists=.env ./scripts/start.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  }
+}
