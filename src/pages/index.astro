@@ -3,6 +3,7 @@ import { actions } from 'astro:actions';
 import { ClientRouter } from 'astro:transitions';
 import * as db from '../lib/db';
 import { demo, models } from '../lib/provider';
+import { preferences } from '../lib/settings';
 import type { Model } from '../lib/domain';
 import '../styles/global.css';
 import '../styles/workspace.css';
@@ -24,6 +25,8 @@ const requestedView = Astro.url.searchParams.get('view');
 const view = active ? 'chat' : Astro.url.searchParams.has('character') ? 'characters' : Astro.url.searchParams.has('world') ? 'worlds' : ['characters', 'worlds'].includes(requestedView || '') ? requestedView : 'start';
 let catalog: Model[] = [];
 try { catalog = await models(); } catch (error) { notice ||= error instanceof Error ? error.message : 'Catalog unavailable.'; }
+const defaultModel = preferences().model;
+catalog.sort((a, b) => Number(b.id === defaultModel) - Number(a.id === defaultModel));
 const edit = characters.find(c => c.id === Astro.url.searchParams.get('character'));
 const world = worlds.find(w => w.id === Astro.url.searchParams.get('world')) || worlds[0];
 const lore = world ? db.loreFor(world.id) : [];
@@ -41,7 +44,7 @@ if (Astro.request.method === 'POST' && failed) {
     <div class="loading-state" role="status" aria-live="polite" hidden><span>Loading…</span><div class="skeleton" aria-hidden="true"></div><div class="skeleton" aria-hidden="true"></div><div class="skeleton" aria-hidden="true"></div></div>
     {view !== 'chat' && <aside class="sidebar">
       <a class="brand" href="/">✧ Otherlore<span>STORIES BEYOND THE PAGE</span></a>
-      <div class="mode">{demo() ? '◉ Offline demo' : '◉ OpenRouter · free models'}</div>
+      <div class="mode">{demo() ? '◉ Offline demo' : '◉ Live API'}</div>
       <nav aria-label="Workspace">{[['start', '/', 'Start'], ['characters', '/?view=characters', 'Characters'], ['worlds', '/?view=worlds', 'Worlds & lore']].map(([key, href, label]) => <a href={href} aria-current={view === key ? 'page' : undefined}>{label}</a>)}</nav>
       <h2 class="eyebrow">RECENT JOURNEYS</h2>
       {sessions.length === 0 && <p class="muted">Your first adventure is waiting.</p>}
@@ -49,7 +52,7 @@ if (Astro.request.method === 'POST' && failed) {
       <p class="sidebar-foot">Local by design. Yours to imagine.<br/>No subscriptions. No paywalls.</p>
     </aside>}
     <main id="main">
-      <header class="topbar">{active ? <a href="/">← Back to start</a> : <span>{view === 'start' ? 'START A STORY' : view === 'characters' ? 'CHARACTER LIBRARY' : 'WORLD LIBRARY'}</span>}<span>✦ {demo() ? 'Offline demo · No network calls' : 'Prompts leave your device'}</span></header>
+      <header class="topbar">{active ? <a href="/">← Back to start</a> : <span>{view === 'start' ? 'START A STORY' : view === 'characters' ? 'CHARACTER LIBRARY' : 'WORLD LIBRARY'}</span>}<a href="/settings">⚙ Settings</a><span>✦ {demo() ? 'Offline demo · No network calls' : 'Prompts leave your device'}</span></header>
       {notice && <div class:list={['notice', { error: failed }]} role={failed ? 'alert' : 'status'}>{notice}</div>}
       {active ? <>
         <section class="chat-heading"><div><p class="eyebrow">{active.world.name}</p><h1>{active.card.name}</h1></div><a class="button secondary" href={`/export?session=${active.id}`}>↓ Export story</a></section>
@@ -60,7 +63,7 @@ if (Astro.request.method === 'POST' && failed) {
               <input type="hidden" name="session" value={active.id}/><input type="hidden" name="last" value={active.messages.at(-1)?.id || 0}/>
               <label>Your next move<textarea name="content" required maxlength="3000" rows="4" placeholder="Say something, take an action, change the story…">{failed ? posted?.get('content')?.toString() : ''}</textarea></label>
               <div class="form-row"><label>Model<select name="model" required>{catalog.map(m => <option value={m.id} selected={m.id === active!.model}>{m.id}</option>)}</select></label><button disabled={!catalog.length}>Send turn ↗</button></div>
-              <small class="muted">{demo() ? 'Demo replies are scripted, not AI. Your conversation still persists.' : 'Character, selected lore, memory, and conversation are sent to OpenRouter.'}</small>
+              <small class="muted">{demo() ? 'Demo replies are scripted, not AI. Your conversation still persists.' : 'Character, selected lore, memory, and conversation are sent to your configured API.'}</small>
             </form>
           </section>
           <details class="memory-panel panel" open={Boolean(Astro.getActionResult(actions.memory) || Astro.getActionResult(actions.editMemory) || Astro.getActionResult(actions.remove))}><summary>Story details & memory</summary><p class="muted">{active.card.description}</p><h2>Memory ledger</h2><p class="muted">Arc {active.memory.arc} · {active.memory.facts.length} facts</p>
@@ -74,7 +77,7 @@ if (Astro.request.method === 'POST' && failed) {
           </details>
         </div>
       </> : view === 'start' && <section class="hero" id="stories"><p class="eyebrow">A THOUSAND WORLDS. ONE PLACE TO BEGIN.</p><h1>Every story starts<br/>with <em>what if.</em></h1><p>Create someone unforgettable. Step into a world of your own.<br/>Let the story remember where you’ve been.</p><a class="button" href="#new-story">Begin a journey ↗</a><span class="hero-star" aria-hidden="true">✧</span></section>}
-      {view === 'start' && <section id="new-story" class="panel"><div class="section-title"><div><p class="eyebrow">OPEN A NEW CHAPTER</p><h2>Begin a journey</h2></div><form method="POST" action={actions.refresh}><button class="secondary">↻ Refresh models</button></form></div><p>Starter adventure: choose a heroine and <strong>Veyr — The Broken Seal</strong>. You play the male Wardbreaker. All four hunters are present; the selected heroine is the active voice. <a href="/?character=veyr-player">Review your character</a>.</p><form method="POST" action={actions.start} class="start-grid"><label>Character<select name="character" required>{characters.filter(c => c.id !== 'veyr-player').map(c => <option value={c.id}>{c.name}</option>)}</select></label><label>World<select name="world" required>{worlds.map(w => <option value={w.id}>{w.name}</option>)}</select></label><label>Free model<select name="model" required>{catalog.map(m => <option value={m.id}>{m.id} · {Math.round(m.context/1024)}k</option>)}</select></label><button disabled={!catalog.length || !characters.length || !worlds.length}>Start story ↗</button></form></section>}
+      {view === 'start' && <section id="new-story" class="panel"><div class="section-title"><div><p class="eyebrow">OPEN A NEW CHAPTER</p><h2>Begin a journey</h2></div><form method="POST" action={actions.refresh}><button class="secondary">↻ Refresh models</button></form></div><p>Starter adventure: choose a heroine and <strong>Veyr — The Broken Seal</strong>. You play the male Wardbreaker. All four hunters are present; the selected heroine is the active voice. <a href="/?character=veyr-player">Review your character</a>.</p><form method="POST" action={actions.start} class="start-grid"><label>Character<select name="character" required>{characters.filter(c => c.id !== 'veyr-player').map(c => <option value={c.id}>{c.name}</option>)}</select></label><label>World<select name="world" required>{worlds.map(w => <option value={w.id}>{w.name}</option>)}</select></label><label>API model<select name="model" required>{catalog.map(m => <option value={m.id}>{m.id} · {Math.round(m.context/1024)}k</option>)}</select></label><button disabled={!catalog.length || !characters.length || !worlds.length}>Start story ↗</button></form></section>}
       {view === 'characters' && <section id="characters"><div class="section-title"><div><p class="eyebrow">MEET YOUR NEXT CHAPTER</p><h2>Characters</h2></div><span class="muted">{characters.length} in your collection</span></div><div class="cards">{characters.map((c,i) => <article class="card"><div class:list={['portrait', `tone-${i%3}`]} aria-hidden="true">{c.name.slice(0,1)}<span>✧</span></div><div class="card-body"><h3>{c.name}</h3><p>{c.description}</p><a href={`/?character=${c.id}#character-editor`}>Edit character ↗</a></div></article>)}</div>
         <details id="character-editor" open={Boolean(edit)}><summary>{edit ? `Edit ${edit.name}` : '＋ Create a character'}</summary><form method="POST" action={`${actions.character}&${new URLSearchParams(Astro.url.searchParams)}`} class="editor"><input type="hidden" name="id" value={edit?.id || ''}/><label>Name<input name="name" required maxlength="80" value={edit?.name}/></label><label>Description<textarea name="description" required maxlength="1000">{edit?.description}</textarea></label><label>Personality & voice<textarea name="personality" required maxlength="1000">{edit?.personality}</textarea></label><label>Starting scenario<textarea name="scenario" required maxlength="1000">{edit?.scenario}</textarea></label><label>First message<textarea name="first_message" required maxlength="1500">{edit?.first_message}</textarea></label><label>2–4 example exchanges (separate with a blank line)<textarea name="examples" required maxlength="2000" rows="6">{edit?.example_dialogues.join('\n\n')}</textarea></label><button>Save character</button>{edit && <a href="/?view=characters#character-editor">Create another instead</a>}</form>{edit && <form method="POST" action={`${actions.remove}&${new URLSearchParams(Astro.url.searchParams)}`} data-confirm="Delete this character? Existing sessions must be deleted first."><input type="hidden" name="kind" value="character"/><input type="hidden" name="id" value={edit.id}/><button class="danger">Delete character</button></form>}</details>
       </section>}
@@ -106,7 +109,7 @@ if (Astro.request.method === 'POST' && failed) {
       });
       document.addEventListener('submit', event => {
         const form = event.target;
-        if (!(form instanceof HTMLFormElement) || event.defaultPrevented) return;
+        if (!(form instanceof HTMLFormElement) || form.closest('.settings-page') || event.defaultPrevented) return;
         if (form.dataset.confirm && !confirm(form.dataset.confirm)) { event.preventDefault(); return; }
         const button = form.querySelector<HTMLButtonElement>('button[type="submit"], button:not([type])');
         if (button) { button.dataset.working = button.textContent || ''; button.disabled = true; button.textContent = 'Working…'; }

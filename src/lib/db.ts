@@ -9,6 +9,7 @@ const path = resolve(process.env.OTHERLORE_DB_PATH || import.meta.env?.OTHERLORE
 mkdirSync(dirname(path), { recursive: true });
 const db = new DatabaseSync(path);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS characters (id TEXT PRIMARY KEY, card TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS lore (id TEXT PRIMARY KEY, world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE, data TEXT NOT NULL);
@@ -19,6 +20,8 @@ CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, id);`);
 
 type Row = Record<string, string>;
 const rows = (sql: string, ...args: string[]) => db.prepare(sql).all(...args) as Row[];
+export const readSetting = (id: string) => rows('SELECT value FROM settings WHERE id=?', id)[0]?.value;
+export const writeSetting = (id: string, value: string) => { db.prepare('INSERT INTO settings VALUES (?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value').run(id, value); };
 export const characters = () => rows('SELECT * FROM characters').map(r => ({ id: r.id, ...JSON.parse(r.card) as Card }));
 export const worlds = () => rows('SELECT * FROM worlds');
 export const sessions = () => rows('SELECT * FROM sessions ORDER BY created_at DESC');

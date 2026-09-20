@@ -17,6 +17,27 @@ try {
   assert.equal(home.headers.get('referrer-policy'), 'same-origin', 'Browser form POSTs must retain their same-origin Origin header');
   const html = await home.text();
   assert.ok(html.includes('Elara Vey'));
+  assert.ok(html.includes('href="/settings"'));
+  const settingsPage = await (await fetch(origin + '/settings')).text();
+  assert.ok(settingsPage.includes('Your model, your controls'));
+  assert.ok(settingsPage.includes('type="password"'));
+  assert.equal((await post('/settings?_action=connection', { operation: 'save', mode: 'demo', api_key: '' }, 'https://evil.example')).status, 403);
+  const badKey = await post('/settings?_action=connection', { operation: 'save', mode: 'live', api_key: 'SECRET invalid key' });
+  const badKeyPage = await badKey.text();
+  assert.ok(badKeyPage.includes('API keys cannot contain whitespace'));
+  assert.ok(!badKeyPage.includes('SECRET invalid key'));
+  const demoSettings = await post('/settings?_action=connection', { operation: 'save', mode: 'demo', api_key: '' });
+  const demoSettingsPage = await demoSettings.text();
+  assert.ok(demoSettingsPage.includes('Connection saved.'), demoSettingsPage);
+  const modelId = /name="model" value="([^"]+)"/.exec(settingsPage)?.[1];
+  if (modelId) {
+    const generation = await post('/settings?_action=generation', { model: modelId, parameters: '{}' });
+    assert.ok((await generation.text()).includes('Default model and generation controls saved.'));
+    const invalid = await post('/settings?_action=generation', { model: modelId, parameters: '{"temperature":99}' });
+    assert.ok((await invalid.text()).includes('Invalid generation parameter.'));
+  }
+  const cleared = await post('/settings?_action=connection', { operation: 'clear', mode: 'demo', api_key: '' });
+  assert.ok((await cleared.text()).includes('Key removed; demo mode enabled.'));
   assert.ok(html.includes('Veyr — The Broken Seal'));
   assert.ok(html.includes('Captain Maelin Rook'));
   assert.ok(html.includes('class="loading-state"'));

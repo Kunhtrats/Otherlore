@@ -1,0 +1,156 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import { actions } from 'astro:actions';
+import { demo, models } from '../lib/provider';
+import { controls, endpoint, keyConfigured, preferences } from '../lib/settings';
+import type { Model } from '../lib/domain';
+import '../styles/global.css';
+import '../styles/motion.css';
+const saved = preferences();
+const result = Astro.getActionResult(actions.connection) || Astro.getActionResult(actions.generation);
+let catalog: Model[] = [];
+let error = '';
+try { catalog = await models(false, true); } catch (e) { error = e instanceof Error ? e.message : 'Catalog unavailable.'; }
+---
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><title>Settings · Otherlore</title><ClientRouter /></head>
+  <body>
+    <a class="skip" href="#main">Skip to settings</a>
+    <main id="main" class="settings-page" data-config={JSON.stringify({ catalog, controls, saved, endpoint: endpoint() })}>
+      <header class="topbar"><a href="/">← Workspace</a><span>YOUR CONNECTION · YOUR CHOICE</span></header>
+      <div class="settings-heading"><p class="eyebrow">MODEL STUDIO</p><h1>Your model, your controls</h1><p class="muted">Cloud or local. Paid or free. You choose the API and the model.</p></div>
+      <p id="settings-status" class="notice" role="status" aria-live="polite">{result?.error?.message || result?.data?.notice || error || 'Changes save in place. Your position and unsaved controls stay here.'}</p>
+      <div class="settings-layout">
+        <section class="panel" aria-labelledby="connection-title">
+          <p class="eyebrow">01 / CONNECTION</p><h2 id="connection-title">Where your story runs</h2>
+          <p id="key-state" class="connection-badge">{keyConfigured() ? 'Key configured · hidden' : 'No stored key'} · {demo() ? 'Demo mode' : 'Live mode'}</p>
+          <form method="POST" action={actions.connection} id="connection-form" data-astro-reload>
+            <label>API base URL<input name="endpoint" type="url" required maxlength="500" value={endpoint()} placeholder="https://openrouter.ai/api/v1"/></label>
+            <small class="muted">OpenAI-compatible /models and /chat/completions. Local examples: http://localhost:1234/v1 (LM Studio), http://localhost:11434/v1 (Ollama). HTTP is limited to loopback.</small>
+            <label>API key<input name="api_key" type="password" autocomplete="new-password" maxlength="512" placeholder="Blank keeps key only for the same endpoint" spellcheck="false"/></label>
+            <small class="muted">Optional for local servers. Changing endpoint never forwards your previous key. Keys are stored unencrypted in local SQLite; protect backups.</small>
+            <label>Mode<select name="mode"><option value="demo" selected={demo()}>Offline demo</option><option value="live" selected={!demo()}>Live API</option></select></label>
+            <details><summary>Context budget when the API omits it</summary><label>Tokens<input name="contextBudget" type="number" min="1024" max="2000000" required value={saved.contextBudget || 4096}/></label><small class="muted">An explicit local budget, not an advertised model capability. Set this to your server’s configured context. API-reported context takes precedence.</small></details>
+            <div class="settings-buttons"><button name="operation" value="save">Save connection</button><button name="operation" value="test" class="secondary">Test connection</button><button name="operation" value="clear" class="danger">Remove key & use demo</button></div>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="model-title">
+          <p class="eyebrow">02 / MODEL & GENERATION</p><div class="section-title"><h2 id="model-title">Find your voice</h2><button type="button" id="refresh-models" class="secondary">Refresh API catalog</button></div>
+          <p class="muted">Models come from the saved endpoint, never a built-in list. Paid calls—including memory updates—may incur charges. No automatic model switching.</p>
+          <label>Search models<input id="model-search" type="search" placeholder="Name or model ID"/></label>
+          <label>Available models<select id="model-picker" size="6" aria-describedby="catalog-count"></select></label><small id="catalog-count" class="muted"></small>
+          <button type="button" id="load-controls" class="secondary">Load model controls</button>
+          <div id="model-loading" hidden role="status">Loading API metadata…<div class="skeleton" aria-hidden="true"></div><div class="skeleton" aria-hidden="true"></div></div>
+          <div id="model-details" hidden>
+            <h3 id="model-name"></h3><code id="model-id"></code><p id="model-description" class="muted"></p><dl id="model-meta" class="model-meta"></dl>
+            <details><summary>API-advertised capabilities & pricing</summary><p id="capabilities" class="prose"></p><p id="prices" class="prose"></p><small class="muted">Metadata is supplied by your API. Prices are reported as-is; OpenRouter prompt/completion prices are USD per token. Missing metadata is not proof of support or zero cost.</small></details>
+            <form method="POST" action={actions.generation} id="generation-form" data-astro-reload>
+              <input type="hidden" name="model"/><input type="hidden" name="parameters" value="{}"/><input type="hidden" name="endpoint" value={endpoint()}/>
+              <div id="parameter-grid" class="parameter-grid"></div>
+              <p id="parameter-note" class="muted"></p><p class="muted">Blank means provider default. Controls apply only to this saved model’s future replies; existing journeys keep their selected model. Reply tokens are also bounded by context and provider limits.</p>
+              <div class="settings-buttons"><button>Save model & controls</button><button type="button" id="reset-controls" class="secondary">Use provider defaults</button></div>
+            </form>
+          </div>
+          <noscript><p>Enable JavaScript for in-place model discovery and generation controls. Connection forms still work without it.</p></noscript>
+        </section>
+      </div>
+    </main>
+    <script>
+      import { actions } from 'astro:actions';
+      import type { Model } from '../lib/domain';
+      type Control = { key: string; label: string; min: number; max: number; step: number; help: string };
+      function setup() {
+        const root = document.querySelector<HTMLElement>('.settings-page');
+        if (!root || root.dataset.ready) return;
+        root.dataset.ready = 'true';
+        const config = JSON.parse(root.dataset.config!) as { catalog: Model[]; controls: Control[]; saved: { model?: string; parameters: Record<string, number> }; endpoint: string };
+        const get = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
+        const picker = get<HTMLSelectElement>('model-picker'), generation = get<HTMLFormElement>('generation-form'), connection = get<HTMLFormElement>('connection-form');
+        const drafts = new Map<string, Record<string, string>>();
+        let loaded: string | undefined, pending = false;
+        const status = (text: string, error = false) => { const node = get('settings-status'); node.textContent = text; node.classList.toggle('error', error); };
+        const remember = () => { if (loaded) drafts.set(loaded, Object.fromEntries([...generation.querySelectorAll<HTMLInputElement>('[data-parameter]')].map(i => [i.dataset.parameter!, i.value]))); };
+        function fill() {
+          const previous = picker.value || config.saved.model;
+          const query = get<HTMLInputElement>('model-search').value.toLowerCase();
+          const list = config.catalog.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(query));
+          picker.replaceChildren(...list.map(m => new Option(m.name || m.id, m.id, false, m.id === previous)));
+          get('catalog-count').textContent = `${list.length} of ${config.catalog.length} API models`;
+          get<HTMLButtonElement>('load-controls').disabled = !list.length || pending;
+        }
+        function render() {
+          remember();
+          const model = config.catalog.find(m => m.id === picker.value);
+          if (!model) return;
+          loaded = model.id; get('model-details').hidden = false;
+          get('model-name').textContent = model.name || model.id; get('model-id').textContent = model.id;
+          get('model-description').textContent = model.description || 'No description published by this API.';
+          get('capabilities').textContent = model.parameters?.join(', ') || 'No supported-parameter metadata published. Optional controls are not guessed.';
+          get('prices').textContent = model.pricing ? Object.entries(model.pricing).map(([k, v]) => `${k}: ${v}`).join(' · ') : 'Pricing not published. Check your provider.';
+          const metadata = [['Context', `${model.context.toLocaleString()} tokens${model.contextReported ? ' · API reported' : ' · configured budget'}`], ['Output ceiling', model.maxOutput?.toLocaleString() || 'Not published']];
+          get('model-meta').replaceChildren(...metadata.map(([label, value]) => { const div = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; div.append(dt, dd); return div; }));
+          (generation.elements.namedItem('model') as HTMLInputElement).value = model.id;
+          (generation.elements.namedItem('endpoint') as HTMLInputElement).value = config.endpoint;
+          const supported = config.controls.filter(c => model.parameters?.includes(c.key));
+          get('parameter-grid').replaceChildren(...supported.map(c => {
+            const label = document.createElement('label'), input = document.createElement('input'), help = document.createElement('small');
+            label.textContent = c.label; input.type = 'number'; input.dataset.parameter = c.key; input.min = String(c.min); input.max = String(c.key === 'max_tokens' ? Math.min(c.max, model.maxOutput || c.max) : c.max); input.step = String(c.step);
+            input.value = drafts.get(model.id)?.[c.key] ?? (config.saved.model === model.id && config.saved.parameters[c.key] !== undefined ? String(config.saved.parameters[c.key]) : '');
+            input.placeholder = model.defaults?.[c.key] !== undefined ? `API default: ${String(model.defaults[c.key])}` : 'Provider default';
+            help.className = 'muted'; help.textContent = c.help; label.append(input, help); return label;
+          }));
+          get('parameter-note').textContent = supported.length ? 'These numeric text-generation controls are advertised for this model. Other capabilities are listed above, not activated.' : 'No editable sampling capabilities were advertised. You can use this model with provider defaults.';
+        }
+        async function run(task: () => Promise<void>) {
+          if (pending) return;
+          pending = true; root!.setAttribute('aria-busy', 'true'); get('model-loading').hidden = false;
+          const disabled = [...root!.querySelectorAll<HTMLButtonElement>('button')].map(button => ({ button, before: button.disabled }));
+          disabled.forEach(({ button }) => button.disabled = true);
+          try { await task(); } catch (e) { status(e instanceof Error ? e.message : 'Request failed. Unsaved inputs are preserved.', true); }
+          finally { pending = false; root!.setAttribute('aria-busy', 'false'); get('model-loading').hidden = true; disabled.forEach(({ button, before }) => button.disabled = before); fill(); }
+        }
+        async function refresh() {
+          const result = await actions.catalog(); if (result.error) throw new Error(result.error.message);
+          config.catalog = result.data.models;
+          if (loaded && !config.catalog.some(m => m.id === loaded)) { remember(); loaded = undefined; get('model-details').hidden = true; }
+          fill();
+        }
+        get('model-search').addEventListener('input', fill);
+        get('load-controls').addEventListener('click', () => run(async () => { await refresh(); render(); status('Controls loaded from the current API catalog. Draft values are retained per model.'); }));
+        get('refresh-models').addEventListener('click', () => run(async () => { await refresh(); status('Catalog refreshed. Select a model and load its controls.'); }));
+        get('reset-controls').addEventListener('click', () => { generation.querySelectorAll<HTMLInputElement>('[data-parameter]').forEach(i => i.value = ''); status('Controls cleared locally. Save to use provider defaults.'); });
+        connection.addEventListener('submit', event => {
+          event.preventDefault(); if (pending) return;
+          const operation = (event.submitter as HTMLButtonElement | null)?.value || 'save';
+          if (operation === 'clear' && !confirm('Remove the stored key and switch to demo?')) return;
+          const data = new FormData(connection); data.set('operation', operation);
+          run(async () => {
+            const result = await actions.connection(data); if (result.error) throw new Error(result.error.message); status(result.data.notice);
+            if (operation !== 'test') {
+              (connection.elements.namedItem('api_key') as HTMLInputElement).value = '';
+              if (operation === 'clear') (connection.elements.namedItem('mode') as HTMLSelectElement).value = 'demo';
+              get('key-state').textContent = operation === 'clear' ? 'Key removed · Demo mode' : 'Connection saved · credentials hidden';
+              if (operation === 'save') {
+                const base = String(data.get('endpoint')).replace(/\/+$/, '');
+                if (base !== config.endpoint) { config.endpoint = base; config.catalog = []; config.saved = { parameters: {} }; drafts.clear(); loaded = undefined; get('model-details').hidden = true; fill(); }
+                await refresh();
+              }
+            }
+          });
+        });
+        generation.addEventListener('submit', event => {
+          event.preventDefault(); if (pending) return;
+          const values = Object.fromEntries([...generation.querySelectorAll<HTMLInputElement>('[data-parameter]')].filter(i => i.value !== '').map(i => [i.dataset.parameter!, Number(i.value)]));
+          const data = new FormData(generation); data.set('parameters', JSON.stringify(values));
+          run(async () => { const result = await actions.generation(data); if (result.error) throw new Error(result.error.message); config.saved = { model: String(data.get('model')), parameters: values }; remember(); status(result.data.notice); });
+        });
+        fill(); render();
+      }
+      document.addEventListener('astro:page-load', setup); setup();
+    </script>
+  </body>
+</html>
+<style>
+  .settings-page{margin:0 auto;max-width:1440px;padding:0 clamp(18px,4vw,60px) 60px}.settings-heading{padding:32px 0 12px}.settings-heading h1{font-size:clamp(30px,4vw,52px)}.settings-layout{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(360px,1.4fr);gap:24px;align-items:start}.settings-page .panel{margin:12px 0;padding:28px;background:linear-gradient(145deg,#1c2423,#151a1b);border:1px solid var(--line);border-radius:16px}.connection-badge{border:1px solid #536050;border-radius:20px;display:inline-block;padding:8px 14px;color:#c4d7b8;font-size:12px}.settings-buttons{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px;align-items:center}.parameter-grid,.model-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:18px;margin:24px 0}.model-meta dd{margin:8px 0;color:var(--accent)}.settings-page small{display:block;line-height:1.6}.settings-page code{overflow-wrap:anywhere}.settings-page input,.settings-page select{width:100%}#model-picker{min-height:190px}#model-picker option{padding:10px;border-bottom:1px solid var(--line)}#settings-status{position:sticky;top:12px;z-index:5;box-shadow:0 4px 20px #0006;background:#202c29}#settings-status.error{background:#392523}#model-details{margin-top:26px;padding-top:22px;border-top:1px solid var(--line)}@media(max-width:850px){.settings-layout{grid-template-columns:1fr}.settings-page .panel{padding:20px}.section-title{flex-wrap:wrap;gap:12px}}
+</style>

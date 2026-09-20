@@ -3,7 +3,8 @@ import { z } from 'astro/zod';
 import { randomUUID } from 'node:crypto';
 import * as store from '../lib/db';
 import { applyDelta } from '../lib/domain';
-import { demo, models, reply, extract } from '../lib/provider';
+import { demo, models, reply, extract, testConnection } from '../lib/provider';
+import { apiKey, controls, endpoint, isOpenRouter, preferences, saveKey, savePreferences, supportedSettings, validateEndpoint } from '../lib/settings';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const id = text(100);
@@ -36,6 +37,39 @@ async function updateMemory(id: string) {
   return pending.length > batch.length ? 'Memory updated; more messages remain for the next pass.' : 'Memory updated.';
 }
 export const server = {
+  catalog: defineAction({ handler: () => guarded(async () => ({ models: await models(true, true) })) }),
+  connection: defineAction({ accept: 'form', input: z.object({ operation: z.enum(['save', 'test', 'clear']), api_key: z.string().trim().max(512).nullish().transform(value => value || ''), mode: z.enum(['demo', 'live']), endpoint: z.string().max(500).optional(), contextBudget: z.coerce.number().int().min(1024).max(2000000).optional() }), handler: input => guarded(async () => {
+    if (busy.size) throw new Error('Wait for active chat operations before changing connection settings.');
+    if (input.operation === 'clear') {
+      store.transaction(() => { saveKey(''); savePreferences({ ...preferences(), mode: 'demo' }); });
+      return { notice: 'Key removed; demo mode enabled. Any environment key is also disabled until you save a new key.' };
+    }
+    const base = validateEndpoint(input.endpoint || endpoint());
+    const changed = base !== endpoint();
+    const key = input.api_key || (changed ? '' : apiKey());
+    if (/[\s\x00-\x1f]/.test(key)) throw new Error('API keys cannot contain whitespace or control characters.');
+    if (input.operation === 'test') {
+      await testConnection(key, base);
+      return { notice: 'Connection test passed. This does not guarantee model capacity. Unsaved changes remain unsaved.' };
+    }
+    if (input.mode === 'live' && isOpenRouter(base) && !key) throw new Error('Enter a key before enabling OpenRouter.');
+    if (input.mode === 'live') await testConnection(key, base);
+    store.transaction(() => {
+      if (changed || input.api_key) saveKey(key);
+      savePreferences({ ...preferences(), ...(changed ? { model: undefined, parameters: {} } : {}), mode: input.mode, endpoint: base, contextBudget: input.contextBudget || 4096 });
+    });
+    return { notice: 'Connection saved. Changes apply immediately.' };
+  }) }),
+  generation: defineAction({ accept: 'form', input: z.object({ model: text(200), parameters: z.string().max(2000), endpoint: z.string().max(500).optional() }), handler: input => guarded(async () => {
+    if (busy.size) throw new Error('Wait for active chat operations before changing generation settings.');
+    const model = (await models(false, true)).find(m => m.id === input.model);
+    if (input.endpoint && input.endpoint !== endpoint()) throw new Error('Connection changed. Reload the catalog before saving controls.');
+    if (!model) throw new Error('Select a model from the current API catalog.');
+    const values = z.record(z.string(), z.number()).parse(JSON.parse(input.parameters));
+    if (Object.keys(values).some(key => !controls.some(c => c.key === key))) throw new Error('Unknown generation parameter.');
+    savePreferences({ ...preferences(), model: model.id, parameters: supportedSettings(model, values, true) });
+    return { notice: 'Default model and generation controls saved. Existing journeys keep their selected model; controls apply to future replies.' };
+  }) }),
   character: defineAction({ accept: 'form', input: z.object({ id: optionalId, name: text(80), description: text(1000), personality: text(1000), scenario: text(1000), first_message: text(1500), examples: text(2000) }), handler: input => guarded(() => {
     const { id, examples, ...card } = input;
     const example_dialogues = examples.split(/\r?\n\s*\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -52,11 +86,11 @@ export const server = {
     if (busy.size) throw new Error('Wait for active chat operations before deleting data.');
     store.remove(input.kind, input.id); return { notice: 'Deleted.' };
   }) }),
-  start: defineAction({ accept: 'form', input: z.object({ character: id, world: id, model: id }), handler: input => guarded(async () => {
-    if (!(await models()).some(m => m.id === input.model)) throw new Error('Select an available free model.');
+  start: defineAction({ accept: 'form', input: z.object({ character: id, world: id, model: text(200) }), handler: input => guarded(async () => {
+    if (!(await models()).some(m => m.id === input.model)) throw new Error('Select an available API model.');
     return { session: store.createSession(input.character, input.world, input.model) };
   }) }),
-  send: defineAction({ accept: 'form', input: z.object({ session: id, content: text(3000), model: id, last: z.coerce.number().int().nonnegative() }), handler: input => guarded(() => locked(input.session, async () => {
+  send: defineAction({ accept: 'form', input: z.object({ session: id, content: text(3000), model: text(200), last: z.coerce.number().int().nonnegative() }), handler: input => guarded(() => locked(input.session, async () => {
     const s = store.session(input.session);
     if ((s.messages.at(-1)?.id || 0) !== input.last) throw new Error('This conversation changed. Reload before sending again.');
     const result = await reply(input.model, s.card, [{ id: 'world', name: s.world.name, content: s.world.description, constant: true, keywords: [] }, ...s.lore], s.memory, s.messages, input.content);
