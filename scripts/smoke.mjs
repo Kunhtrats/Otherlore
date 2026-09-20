@@ -17,6 +17,15 @@ try {
   assert.equal(home.headers.get('referrer-policy'), 'same-origin', 'Browser form POSTs must retain their same-origin Origin header');
   const html = await home.text();
   assert.ok(html.includes('Elara Vey'));
+  assert.ok(html.includes('id="new-story"'));
+  assert.ok(!html.includes('id="characters"'));
+  assert.ok(!html.includes('id="worlds"'));
+  const charactersPage = await (await fetch(origin + '/?view=characters')).text();
+  assert.ok(charactersPage.includes('id="characters"'));
+  assert.ok(!charactersPage.includes('id="new-story"'));
+  const worldsPage = await (await fetch(origin + '/?view=worlds')).text();
+  assert.ok(worldsPage.includes('id="worlds"'));
+  assert.ok(!worldsPage.includes('id="characters"'));
   assert.equal((await post('/?_action=start', {}, 'https://evil.example')).status, 403);
   assert.equal((await post('/?_action=start', {}, 'null')).status, 403);
   const started = await post('/?_action=start', { character: 'starter-character', world: 'starter-world', model: 'demo/offline' });
@@ -40,6 +49,10 @@ try {
   assert.equal((await exported()).memory.summary, 'The bell calls.');
   const page = await (await fetch(origin + location)).text();
   assert.ok(page.includes('The bell calls.'));
+  assert.ok(page.includes('class="composer"'));
+  assert.ok(!page.includes('class="sidebar"'));
+  for (const section of ['new-story', 'characters', 'worlds']) assert.ok(!page.includes(`id="${section}"`));
+  assert.match(page, /<details class="memory-panel panel">/);
   await post('/?_action=world', { id: 'smoke-world', name: 'Test world', description: 'A quiet harbor.' });
   await post('/?_action=lore', { id: 'smoke-lore', world: 'smoke-world', name: 'Tide', content: 'The tide rises at noon.', keywords: 'tide, noon', constant: 'on' });
   const worldPage = await (await fetch(origin + '/?world=smoke-world')).text();
