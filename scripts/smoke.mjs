@@ -17,6 +17,9 @@ try {
   assert.equal(home.headers.get('referrer-policy'), 'same-origin', 'Browser form POSTs must retain their same-origin Origin header');
   const html = await home.text();
   assert.ok(html.includes('Elara Vey'));
+  assert.ok(html.includes('Veyr — The Broken Seal'));
+  assert.ok(html.includes('Captain Maelin Rook'));
+  assert.ok(html.includes('class="loading-state"'));
   assert.ok(html.includes('id="new-story"'));
   assert.ok(!html.includes('id="characters"'));
   assert.ok(!html.includes('id="worlds"'));
@@ -28,6 +31,13 @@ try {
   assert.ok(!worldsPage.includes('id="characters"'));
   assert.equal((await post('/?_action=start', {}, 'https://evil.example')).status, 403);
   assert.equal((await post('/?_action=start', {}, 'null')).status, 403);
+  const veyr = await post('/?_action=start', { character: 'veyr-maelin', world: 'veyr', model: 'demo/offline' });
+  assert.equal(veyr.status, 302);
+  const veyrId = new URL(veyr.headers.get('location'), origin).searchParams.get('session');
+  const veyrExport = await (await fetch(`${origin}/export?session=${veyrId}`)).json();
+  assert.ok(veyrExport.messages[0].content.includes('Rook Gate'));
+  const veyrTurn = await post(`/?session=${veyrId}&_action=send`, { session: veyrId, model: 'demo/offline', content: 'I point at the ferry. Hold the gate before arresting me.', last: String(veyrExport.messages[0].id) });
+  assert.ok((await veyrTurn.text()).includes('Offline demo turn saved.'));
   const started = await post('/?_action=start', { character: 'starter-character', world: 'starter-world', model: 'demo/offline' });
   assert.equal(started.status, 302, await started.text());
   const location = started.headers.get('location');

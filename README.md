@@ -1,5 +1,28 @@
 # 🌌 Otherlore
 
+## 0.2.0 — The Broken Seal
+
+An additive feature release: English-language starter cards and constant lore, Astro GET navigation transitions, loading skeletons during navigation/form requests, and subtle interface animations with reduced-motion support. No new dependencies. Action forms retain full-page POST navigation.
+
+### Play the starter scenario
+
+Start the app and select **Veyr — The Broken Seal**, a heroine, and a model under **Begin a journey**. You play the adult male **Wardbreaker** (approved premise A), not the selected heroine. His editable six-field reference card is in Characters and excluded from AI counterpart selection. Choose an 8k-or-larger context for these cards; mandatory lore is never silently discarded, so oversized prompts fail clearly and can use existing model fallbacks.
+
+At **Rook Gate**, all four hunters corner you on a maintenance bridge while a descending floodgate threatens a refugee ferry. A cracked sluice seal is within reach; a mechanical winch brake offers another approach. Openings establish positions, danger, three available hearthstone charges and an opportunity to speak or act without choosing for you.
+
+| Heroine | Specialty | Pursuit motive | Voice |
+| --- | --- | --- | --- |
+| Captain Maelin Rook | Bind a touched object in place | Crown warrant and lawful custody | Numbered commands, legal precision |
+| Branna Cinderhand | Heat touched metal | Restitution for her flooded forge | Blunt forge metaphors, rough humour |
+| Sister Iset Vale | Project remembered images using existing light | Mistaken identification at a damaged shrine | Formal distinctions between observation and inference |
+| Tamsin Reed | Guide a bucketful of visible water | Protect evacuees from further seal-breaking | Practical questions, breath counts, task-based nicknames |
+
+**Emberbinding:** touch a hearthstone, trace a specialty sigil, speak its command. Three charges per stone, one per cast; recharge overnight in a lit hearth. Ordinary effects require sight and concentration. Wardbreaking cancels exactly one touched seal until recast, never repairs it or opens physical locks. No resurrection or mind control. Constant lore also preserves action/adventure tone, non-explicit adult themes and explicit player approval before any permanent character death.
+
+The typed fixture is `src/lib/starter.ts`; `src/lib/db.ts` installs it transactionally once, including on existing databases, without replacing saved cards, sessions or lore. The seed marker prevents later restarts from undoing owner edits or deliberate deletions. The original demo content remains available.
+
+**Scope and assumptions:** all main characters are adults; English was chosen; the protagonist’s guilt is unresolved and his rescue account is a claim, not omniscient truth. Each heroine stores only her own evidence and beliefs. Existing chats have one active heroine: all four are present in the opening, but this release does not add autonomous ensemble turns or share their private cards. Start separate journeys to try each voice. Player-reference edits do not automatically rewrite lore; update the matching world rules when changing his ability. Magic charges and fictional boundaries are prompt-driven, not a deterministic combat engine. Offline mode tests persistence with scripted replies; real roleplay requires OpenRouter. Browser animation appearance and provider obedience require manual evaluation.
+
 **Your characters. Your world. A story that remembers.**
 
 A local-first AI roleplay platform for distinct characters and persistent worlds — free, non-commercial, and designed for self-hosting on your own machine.

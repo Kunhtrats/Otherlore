@@ -4,6 +4,22 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyDelta, buildPrompt, emptyMemory, type Card } from '../src/lib/domain.ts';
+import { heroines, protagonist, starterLore } from '../src/lib/starter.ts';
+
+test('Veyr cards fit a small context and all constant rules survive long history', () => {
+  assert.equal(heroines.length, 4);
+  for (const c of [protagonist, ...heroines.map(h => h.card)]) {
+    assert.deepEqual(Object.keys(c).sort(), Object.keys(card).sort());
+    assert.ok(c.example_dialogues.length >= 2 && c.example_dialogues.length <= 4);
+    assert.ok(c.scenario.length <= 1000 && c.first_message.length <= 1500);
+  }
+  for (const { card: heroine } of heroines) {
+    const prompt = buildPrompt(heroine, starterLore, emptyMemory(), Array.from({ length: 12 }, () => ({ role: 'assistant' as const, content: 'Rain. '.repeat(200) })), 'I reach for the winch brake.', 8192);
+    for (const entry of starterLore) assert.ok(prompt.messages.some(m => m.content.includes(entry.content)));
+    assert.ok(prompt.estimatedTokens + prompt.reserve < 8192);
+  }
+  assert.throws(() => buildPrompt(card, starterLore, emptyMemory(), [], 'Hello', 1024), /constant lore.*budget/);
+});
 
 const card: Card = { name: 'Elara', description: 'Keeper', personality: 'Wry', scenario: 'Rain', first_message: 'Hello', example_dialogues: ['a', 'b'] };
 test('prompt stays bounded, preserves recent text, filters secret facts and irrelevant lore', () => {
@@ -32,6 +48,17 @@ test('SQLite persists turns atomically and protects referenced characters', asyn
   process.env.OTHERLORE_DB_PATH = join(directory, 'test.sqlite');
   const db = await import('../src/lib/db.ts');
   db.seed();
+  assert.equal(db.loreFor('veyr').length, starterLore.length);
+  const original = db.characters().find(c => c.id === 'veyr-maelin')!;
+  db.saveCharacter('veyr-maelin', { ...original, personality: 'Edited by owner' });
+  db.seed();
+  assert.equal(db.characters().find(c => c.id === 'veyr-maelin')!.personality, 'Edited by owner');
+  assert.throws(() => db.createSession('veyr-player', 'veyr', 'demo/offline'), /user-reference/);
+  for (const heroine of heroines) {
+    const journey = db.createSession(heroine.id, 'veyr', 'demo/offline');
+    assert.equal(db.session(journey).messages[0].content, heroine.card.first_message);
+    db.remove('session', journey);
+  }
   const id = db.createSession('starter-character', 'starter-world', 'demo/offline');
   db.commitTurn(id, 'Hi', 'Hello', 'demo/offline');
   assert.equal(db.session(id).messages.length, 3);

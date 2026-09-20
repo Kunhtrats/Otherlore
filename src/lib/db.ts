@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { emptyMemory, type Card, type Lore, type Memory, type Message } from './domain.ts';
+import { starterWorld, starterLore, protagonist, heroines } from './starter.ts';
 
 const path = resolve(process.env.OTHERLORE_DB_PATH || import.meta.env?.OTHERLORE_DB_PATH || '.data/otherlore.sqlite');
 mkdirSync(dirname(path), { recursive: true });
@@ -53,6 +54,7 @@ export function transaction<T>(fn: () => T): T {
   catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 export function createSession(character: string, world: string, model: string) {
+  if (character === 'veyr-player') throw new Error('The Wardbreaker is your user-reference card. Select a heroine as your counterpart.');
   const card = characters().find(c => c.id === character);
   if (!card || !worlds().some(w => w.id === world)) throw new Error('Select an existing character and world.');
   return transaction(() => {
@@ -78,7 +80,17 @@ export function saveMemory(id: string, memory: Memory) {
 export const arcsFor = (id: string) => rows('SELECT * FROM arcs WHERE session_id=? ORDER BY number', id);
 
 export function seed() {
-  if (characters().length || worlds().length) return;
+  transaction(() => {
+    // Seed once per installation; preserve edits and deliberate deletions afterward.
+    db.exec('CREATE TABLE IF NOT EXISTS seed_versions (id TEXT PRIMARY KEY)');
+    if (!rows('SELECT id FROM seed_versions WHERE id=?', 'veyr-1').length) {
+      db.prepare('INSERT OR IGNORE INTO worlds VALUES (?,?,?)').run(starterWorld.id, starterWorld.name, starterWorld.description);
+      for (const { id, card } of [{ id: 'veyr-player', card: protagonist }, ...heroines]) db.prepare('INSERT OR IGNORE INTO characters VALUES (?,?)').run(id, JSON.stringify(card));
+      for (const entry of starterLore) db.prepare('INSERT OR IGNORE INTO lore VALUES (?,?,?)').run(entry.id, starterWorld.id, JSON.stringify(entry));
+      db.prepare('INSERT INTO seed_versions VALUES (?)').run('veyr-1');
+    }
+  });
+  if (characters().some(c => !c.id.startsWith('veyr-')) || worlds().some(w => w.id !== 'veyr')) return;
   transaction(() => {
     saveCharacter('starter-character', { name: 'Elara Vey', description: 'A lantern keeper and cartographer of the wandering city.', personality: 'Wry, observant, warm but cautious. Speaks in concise sensory details.', scenario: 'A stranger arrives at the archive during a storm with a map that changes in the rain.', first_message: '“Close the door before the rain learns our names.” Elara lifts her lantern toward your dripping map. “Now, where did you find that?”', example_dialogues: ['You: Is this road safe?\nElara: Safe is a generous word. It is still there, which is a start.', 'You: Can I trust you?\nElara: With a map, certainly. With your last biscuit? Less so.'] });
     saveWorld('starter-world', 'The Wandering City', 'A city that moves each dawn across a sea of mist. Its lantern-lit archive remembers roads the world has forgotten.');
