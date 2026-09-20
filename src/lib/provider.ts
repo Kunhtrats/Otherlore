@@ -2,6 +2,12 @@ import { buildPrompt, type Model, type Message, type Card, type Memory, type Lor
 import { apiKey, endpoint, isOpenRouter, isDemo, preferences, supportedSettings } from './settings.ts';
 
 export const demo = isDemo;
+export function contextUsage(model: Model, card: Card, lore: Lore[], memory: Memory, history: Message[], input: string) {
+  const saved = preferences();
+  const parameters = supportedSettings(model, saved.model === model.id ? saved.parameters : {});
+  const prompt = buildPrompt(card, lore, memory, history, input, model.context, demo() ? 768 : Math.min(parameters.max_tokens || 768, model.maxOutput || 4096));
+  return { prompt: prompt.estimatedTokens, reserve: prompt.reserve, margin: 128, capacity: model.context, configured: model.contextReported === false };
+}
 let cache: { at: number; base: string; key: string; budget: number; models: Model[] } | undefined;
 export async function models(refresh = false, liveCatalog = false): Promise<Model[]> {
   if (demo() && !liveCatalog) return [{ id: 'demo/offline', context: 16384 }];

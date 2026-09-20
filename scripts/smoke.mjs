@@ -81,7 +81,8 @@ try {
   const page = await (await fetch(origin + location)).text();
   assert.ok(page.includes('The bell calls.'));
   assert.ok(page.includes('class="composer"'));
-  assert.ok(!page.includes('class="sidebar"'));
+  assert.ok(page.includes('class="sidebar"'));
+  assert.ok(page.includes('Delete chat with Elara Vey'));
   for (const section of ['new-story', 'characters', 'worlds']) assert.ok(!page.includes(`id="${section}"`));
   assert.match(page, /<details class="memory-panel panel">/);
   await post('/?_action=world', { id: 'smoke-world', name: 'Test world', description: 'A quiet harbor.' });
@@ -92,6 +93,11 @@ try {
   assert.ok((await (await fetch(origin)).text()).includes('Test keeper'));
   await post('/?_action=remove', { kind: 'character', id: 'smoke-character' });
   assert.ok(!(await (await fetch(origin)).text()).includes('Test keeper'));
+  const deletedChat = await post(`/?session=${id}&_action=remove`, { kind: 'session', id });
+  assert.equal(deletedChat.status, 200);
+  const afterDelete = await deletedChat.text();
+  assert.ok(!afterDelete.includes(`href="/?session=${id}"`));
+  assert.ok(afterDelete.includes('id="new-story"'));
   console.log('Smoke passed: SSR, CSRF rejection, session creation, demo chat, escaping, duplicate prevention, memory, export.');
 } catch (error) { console.error(logs); throw error; }
 finally { child.kill(); await new Promise(r => child.once('exit', r)); rmSync(directory, { recursive: true, force: true }); }

@@ -3,7 +3,7 @@ import { z } from 'astro/zod';
 import { randomUUID } from 'node:crypto';
 import * as store from '../lib/db';
 import { applyDelta } from '../lib/domain';
-import { demo, models, reply, extract, testConnection } from '../lib/provider';
+import { demo, models, reply, extract, testConnection, contextUsage } from '../lib/provider';
 import { apiKey, controls, endpoint, isOpenRouter, preferences, saveKey, savePreferences, supportedSettings, validateEndpoint } from '../lib/settings';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -37,6 +37,12 @@ async function updateMemory(id: string) {
   return pending.length > batch.length ? 'Memory updated; more messages remain for the next pass.' : 'Memory updated.';
 }
 export const server = {
+  context: defineAction({ input: z.object({ session: id, model: text(200), content: z.string().max(3000) }), handler: input => guarded(async () => {
+    const s = store.session(input.session);
+    const model = (await models()).find(m => m.id === input.model);
+    if (!model) throw new Error('Selected model is unavailable.');
+    return contextUsage(model, s.card, [{ id: 'world', name: s.world.name, content: s.world.description, constant: true, keywords: [] }, ...s.lore], s.memory, s.messages, input.content.trim());
+  }) }),
   catalog: defineAction({ handler: () => guarded(async () => ({ models: await models(true, true) })) }),
   connection: defineAction({ accept: 'form', input: z.object({ operation: z.enum(['save', 'test', 'clear']), api_key: z.string().trim().max(512).nullish().transform(value => value || ''), mode: z.enum(['demo', 'live']), endpoint: z.string().max(500).optional(), contextBudget: z.coerce.number().int().min(1024).max(2000000).optional() }), handler: input => guarded(async () => {
     if (busy.size) throw new Error('Wait for active chat operations before changing connection settings.');
@@ -100,7 +106,8 @@ export const server = {
       try { notice += ` ${await updateMemory(input.session)}`; }
       catch { notice += ' Reply saved, but memory extraction failed. Existing memory is intact; retry from the memory panel.'; }
     }
-    return { notice };
+    const updated = store.session(input.session);
+    return { notice, reply: result.text, model: result.model, last: updated.messages.at(-1)!.id };
   })) }),
   memory: defineAction({ accept: 'form', input: z.object({ session: id }), handler: input => guarded(() => locked(input.session, async () => ({ notice: await updateMemory(input.session) }))) }),
   editMemory: defineAction({ accept: 'form', input: z.object({ session: id, facts: text(60000), summary: z.string().max(2000) }), handler: input => guarded(() => locked(input.session, async () => {

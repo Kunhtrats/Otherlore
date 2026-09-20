@@ -7,7 +7,7 @@ import { emptyMemory, type Card } from '../src/lib/domain.ts';
 
 test('API catalog supports paid/local models, scoped controls and actionable errors without fallback', async () => {
   process.env.OTHERLORE_DB_PATH = join(mkdtempSync(join(tmpdir(), 'otherlore-provider-')), 'test.sqlite');
-  const { models, reply, testConnection } = await import('../src/lib/provider.ts');
+  const { models, reply, testConnection, contextUsage } = await import('../src/lib/provider.ts');
   const { savePreferences, supportedSettings, saveKey, apiKey, validateEndpoint } = await import('../src/lib/settings.ts');
   const original = globalThis.fetch;
   const oldDemo = process.env.OTHERLORE_DEMO;
@@ -38,6 +38,11 @@ test('API catalog supports paid/local models, scoped controls and actionable err
     assert.throws(() => supportedSettings(selected, { top_p: 0.8 }, true), /does not support/);
     assert.throws(() => supportedSettings(selected, { max_tokens: 2048 }, true), /output limit/);
     savePreferences({ model: 'a:free', parameters: { temperature: 0.4, max_tokens: 1024 } });
+    const usage = contextUsage(selected, card, [], emptyMemory(), [], 'Hello');
+    assert.equal(usage.reserve, 1024);
+    assert.equal(usage.capacity, 8192);
+    assert.ok(usage.prompt + usage.reserve + usage.margin <= usage.capacity);
+    assert.ok(contextUsage(selected, card, [], emptyMemory(), [], 'Hello longer draft').prompt > usage.prompt);
     saveKey('sk-or-test-only');
     assert.equal(apiKey(), 'sk-or-test-only');
     await testConnection();

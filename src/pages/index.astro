@@ -8,6 +8,7 @@ import type { Model } from '../lib/domain';
 import '../styles/global.css';
 import '../styles/workspace.css';
 import '../styles/motion.css';
+import '../styles/chat.css';
 db.seed();
 const results = [actions.character, actions.world, actions.lore, actions.remove, actions.start, actions.send, actions.memory, actions.editMemory, actions.refresh].map(a => Astro.getActionResult(a));
 const result = results.find(Boolean);
@@ -42,18 +43,19 @@ if (Astro.request.method === 'POST' && failed) {
   <body class:list={[`view-${view}`]}>
     <a class="skip" href="#main">Skip to content</a>
     <div class="loading-state" role="status" aria-live="polite" hidden><span>Loading…</span><div class="skeleton" aria-hidden="true"></div><div class="skeleton" aria-hidden="true"></div><div class="skeleton" aria-hidden="true"></div></div>
-    {view !== 'chat' && <aside class="sidebar">
+    <aside class="sidebar" id="workspace-sidebar">
       <a class="brand" href="/">✧ Otherlore<span>STORIES BEYOND THE PAGE</span></a>
       <div class="mode">{demo() ? '◉ Offline demo' : '◉ Live API'}</div>
-      <nav aria-label="Workspace">{[['start', '/', 'Start'], ['characters', '/?view=characters', 'Characters'], ['worlds', '/?view=worlds', 'Worlds & lore']].map(([key, href, label]) => <a href={href} aria-current={view === key ? 'page' : undefined}>{label}</a>)}</nav>
+      <nav aria-label="Workspace">{[['start', '/', '＋ New chat'], ['characters', '/?view=characters', 'Characters'], ['worlds', '/?view=worlds', 'Worlds & lore'], ['settings', '/settings', 'Settings']].map(([key, href, label]) => <a href={href} aria-current={view === key ? 'page' : undefined}>{label}</a>)}</nav>
       <h2 class="eyebrow">RECENT JOURNEYS</h2>
       {sessions.length === 0 && <p class="muted">Your first adventure is waiting.</p>}
-      {sessions.map(s => <a class:list={['session-link', { selected: s.id === active?.id }]} href={`/?session=${s.id}`}><strong>{characters.find(c => c.id === s.character_id)?.name}</strong><small>{worlds.find(w => w.id === s.world_id)?.name}</small></a>)}
+      {sessions.map(s => <div class="session-row"><a class:list={['session-link', { selected: s.id === active?.id }]} href={`/?session=${s.id}`}><strong>{characters.find(c => c.id === s.character_id)?.name}</strong><small>{worlds.find(w => w.id === s.world_id)?.name}</small></a><form method="POST" action={`${actions.remove}&${new URLSearchParams(Astro.url.searchParams)}`} data-confirm="Permanently delete this chat, its messages and memory? Export it first if you want a backup."><input type="hidden" name="kind" value="session"/><input type="hidden" name="id" value={s.id}/><button class="delete-chat" aria-label={`Delete chat with ${characters.find(c => c.id === s.character_id)?.name}`} title="Delete chat">×</button></form></div>)}
       <p class="sidebar-foot">Local by design. Yours to imagine.<br/>No subscriptions. No paywalls.</p>
-    </aside>}
+    </aside>
     <main id="main">
+      <button class="sidebar-toggle secondary" type="button" aria-controls="workspace-sidebar" aria-expanded="false">☰ Conversations</button>
       <header class="topbar">{active ? <a href="/">← Back to start</a> : <span>{view === 'start' ? 'START A STORY' : view === 'characters' ? 'CHARACTER LIBRARY' : 'WORLD LIBRARY'}</span>}<a href="/settings">⚙ Settings</a><span>✦ {demo() ? 'Offline demo · No network calls' : 'Prompts leave your device'}</span></header>
-      {notice && <div class:list={['notice', { error: failed }]} role={failed ? 'alert' : 'status'}>{notice}</div>}
+      <div id="chat-status" class:list={['notice', { error: failed }]} role="status" hidden={!notice}>{notice}</div>
       {active ? <>
         <section class="chat-heading"><div><p class="eyebrow">{active.world.name}</p><h1>{active.card.name}</h1></div><a class="button secondary" href={`/export?session=${active.id}`}>↓ Export story</a></section>
         <div class="chat-layout">
@@ -88,6 +90,68 @@ if (Astro.request.method === 'POST' && failed) {
       {view !== 'chat' && <footer>✧ Otherlore · Free, non-commercial, local-first.<br/>Keep this application on localhost. No accounts or public-hosting security are provided.</footer>}
     </main>
     <script>
+      import { actions } from 'astro:actions';
+      function setupChat() {
+        const toggle = document.querySelector<HTMLButtonElement>('.sidebar-toggle');
+        if (toggle && !toggle.dataset.ready) {
+          toggle.dataset.ready = 'true';
+          toggle.addEventListener('click', () => { const open = document.body.classList.toggle('sidebar-open'); toggle.setAttribute('aria-expanded', String(open)); });
+          toggle.addEventListener('keydown', event => { if (event.key === 'Escape') { document.body.classList.remove('sidebar-open'); toggle.setAttribute('aria-expanded', 'false'); } });
+        }
+        const form = document.querySelector<HTMLFormElement>('.composer');
+        if (!form || form.dataset.ready) return;
+        form.dataset.ready = 'true';
+        const textarea = form.querySelector<HTMLTextAreaElement>('textarea')!;
+        const transcript = document.querySelector<HTMLElement>('.transcript')!;
+        const counter = document.createElement('div'); counter.className = 'context-counter';
+        const label = document.createElement('small'); label.setAttribute('role', 'status');
+        const meter = document.createElement('progress'); meter.setAttribute('aria-label', 'Estimated context budget usage');
+        counter.append(label, meter); form.append(counter);
+        let revision = 0, timer: ReturnType<typeof setTimeout>;
+        const refreshContext = async () => {
+          const current = ++revision; label.textContent = 'Estimating context…';
+          try {
+            const result = await actions.context({ session: (form.elements.namedItem('session') as HTMLInputElement).value, model: (form.elements.namedItem('model') as HTMLSelectElement).value, content: textarea.value });
+            if (current !== revision || !form.isConnected) return;
+            if (result.error) throw new Error(result.error.message);
+            const usage = result.data, total = usage.prompt + usage.reserve + usage.margin;
+            meter.hidden = false; meter.max = usage.capacity; meter.value = total;
+            label.textContent = `Context ≈ ${total.toLocaleString()} / ${usage.capacity.toLocaleString()} (${Math.round(total / usage.capacity * 100)}%) · prompt ${usage.prompt.toLocaleString()} + reply ${usage.reserve.toLocaleString()} + safety ${usage.margin}${usage.configured ? ' · configured capacity' : ''}`;
+            counter.title = 'Conservative UTF-8-byte estimate, not an exact token count. Includes card, selected lore, memory, retained history and draft for the next request. Older history may be omitted to fit.';
+          } catch (error) { if (current === revision) { meter.hidden = true; label.textContent = `Context unavailable: ${error instanceof Error ? error.message : 'Try again.'}`; } }
+        };
+        textarea.addEventListener('input', () => { ++revision; clearTimeout(timer); timer = setTimeout(refreshContext, 400); });
+        form.querySelector('select')?.addEventListener('change', () => { clearTimeout(timer); void refreshContext(); });
+        void refreshContext();
+        const resize = () => { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`; };
+        textarea.addEventListener('input', resize);
+        textarea.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !textarea.readOnly) { event.preventDefault(); form.requestSubmit(); } });
+        form.addEventListener('submit', async event => {
+          event.preventDefault(); if (textarea.readOnly) return;
+          const data = new FormData(form), content = textarea.value;
+          const button = form.querySelector<HTMLButtonElement>('button')!;
+          textarea.readOnly = true; button.disabled = true; button.textContent = 'Replying…';
+          const status = document.querySelector<HTMLElement>('#chat-status')!;
+          status.hidden = false; status.classList.remove('error'); status.textContent = 'Waiting for your selected model…';
+          const append = (role: string, text: string) => {
+            const article = document.createElement('article'), heading = document.createElement('h2'), body = document.createElement('p');
+            article.className = `message ${role}`; heading.textContent = role === 'user' ? 'You' : document.querySelector('.chat-heading h1')?.textContent || 'Character'; body.textContent = text; article.append(heading, body); transcript.append(article);
+          };
+          try {
+            const result = await actions.send(data);
+            if (result.error) throw new Error(result.error.message);
+            append('user', content); append('assistant', result.data.reply);
+            (form.elements.namedItem('last') as HTMLInputElement).value = String(result.data.last);
+            textarea.value = ''; resize(); status.textContent = `${result.data.notice} Reload to refresh the memory panel.`;
+            const select = form.elements.namedItem('model') as HTMLSelectElement; select.value = result.data.model;
+            void refreshContext();
+            transcript.lastElementChild?.scrollIntoView({ block: 'nearest' });
+          } catch (error) { status.classList.add('error'); status.textContent = error instanceof Error ? error.message : 'Request failed. Your draft is preserved.'; }
+          finally { textarea.readOnly = false; button.disabled = false; button.textContent = 'Send turn ↗'; textarea.focus({ preventScroll: true }); }
+        });
+        resize();
+      }
+      document.addEventListener('astro:page-load', setupChat); setupChat();
       const loading = (busy: boolean) => {
         const status = document.querySelector<HTMLElement>('.loading-state');
         if (status) status.hidden = !busy;

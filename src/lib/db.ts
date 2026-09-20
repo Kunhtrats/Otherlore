@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { emptyMemory, type Card, type Lore, type Memory, type Message } from './domain.ts';
 import { starterWorld, starterLore, protagonist, heroines } from './starter.ts';
+import { atlasDescription, atlasLore } from './atlas.ts';
 
 const path = resolve(process.env.OTHERLORE_DB_PATH || import.meta.env?.OTHERLORE_DB_PATH || '.data/otherlore.sqlite');
 mkdirSync(dirname(path), { recursive: true });
@@ -83,6 +84,27 @@ export function saveMemory(id: string, memory: Memory) {
 export const arcsFor = (id: string) => rows('SELECT * FROM arcs WHERE session_id=? ORDER BY number', id);
 
 export function seed() {
+  seedBase();
+  transaction(() => {
+    if (rows('SELECT id FROM seed_versions WHERE id=?', 'atlas-1').length) return;
+    for (const worldId of ['veyr', 'starter-world']) {
+      if (!worlds().some(w => w.id === worldId)) continue;
+      for (const entry of atlasLore) {
+        const data = { ...entry, id: `${worldId}-${entry.id}` };
+        db.prepare('INSERT OR IGNORE INTO lore VALUES (?,?,?)').run(data.id, worldId, JSON.stringify(data));
+      }
+      if (worldId === 'starter-world') {
+        for (const entry of starterLore.filter(e => ['veyr-magic', 'veyr-boundaries'].includes(e.id))) {
+          const data = { ...entry, id: `starter-world-${entry.id}` };
+          db.prepare('INSERT OR IGNORE INTO lore VALUES (?,?,?)').run(data.id, worldId, JSON.stringify(data));
+        }
+      }
+    }
+    db.prepare('UPDATE worlds SET description=? WHERE id=? AND description=?').run(atlasDescription, 'veyr', starterWorld.description);
+    db.prepare('INSERT INTO seed_versions VALUES (?)').run('atlas-1');
+  });
+}
+function seedBase() {
   transaction(() => {
     // Seed once per installation; preserve edits and deliberate deletions afterward.
     db.exec('CREATE TABLE IF NOT EXISTS seed_versions (id TEXT PRIMARY KEY)');

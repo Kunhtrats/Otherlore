@@ -5,6 +5,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyDelta, buildPrompt, emptyMemory, type Card } from '../src/lib/domain.ts';
 import { heroines, protagonist, starterLore } from '../src/lib/starter.ts';
+import { atlasLore } from '../src/lib/atlas.ts';
+
+test('atlas entries retain schema, fit editors and retrieve without unrelated lore', () => {
+  assert.ok(atlasLore.length >= 45);
+  assert.equal(new Set(atlasLore.map(e => e.id)).size, atlasLore.length);
+  for (const entry of atlasLore) {
+    assert.ok(entry.content.length <= 1000, entry.name);
+    assert.ok(entry.constant || entry.keywords.length > 0);
+  }
+  const prompt = buildPrompt(heroines[0].card, [...starterLore, ...atlasLore], emptyMemory(), [], 'Tell me about the Witness Lantern.', 16384);
+  assert.ok(prompt.messages.some(m => m.content.includes('silver-shuttered')));
+  assert.ok(!prompt.messages.some(m => m.content.includes('Unwritten Veil')));
+  assert.ok(prompt.estimatedTokens + prompt.reserve < 16384);
+  for (const { card: heroine } of heroines) {
+    const small = buildPrompt(heroine, [...starterLore, ...atlasLore], emptyMemory(), [], 'I reach for the brake.', 8192);
+    assert.ok(small.estimatedTokens + small.reserve < 8192);
+    assert.ok(small.messages.some(m => m.content.includes('planet Aethra')));
+  }
+});
 
 test('Veyr cards fit a small context and all constant rules survive long history', () => {
   assert.equal(heroines.length, 4);
@@ -48,7 +67,11 @@ test('SQLite persists turns atomically and protects referenced characters', asyn
   process.env.OTHERLORE_DB_PATH = join(directory, 'test.sqlite');
   const db = await import('../src/lib/db.ts');
   db.seed();
-  assert.equal(db.loreFor('veyr').length, starterLore.length);
+  assert.equal(db.loreFor('veyr').length, starterLore.length + atlasLore.length);
+  const atlasEntry = db.loreFor('veyr').find(e => e.id === 'veyr-atlas-planet')!;
+  db.saveLore('veyr', { ...atlasEntry, content: 'Owner-edited astronomy.' });
+  db.seed();
+  assert.equal(db.loreFor('veyr').find(e => e.id === atlasEntry.id)!.content, 'Owner-edited astronomy.');
   const original = db.characters().find(c => c.id === 'veyr-maelin')!;
   db.saveCharacter('veyr-maelin', { ...original, personality: 'Edited by owner' });
   db.seed();

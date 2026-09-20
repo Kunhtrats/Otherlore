@@ -1,5 +1,11 @@
 # 🌌 Otherlore
 
+## 0.5.0 — Chat-first workspace
+
+Chats can be deleted with the × button in the conversation sidebar (confirmation required; export first to keep a copy). The composer shows a live, conservative context-budget estimate including the draft, selected prompt content, reply reserve and safety margin. It updates after turns and model changes; it is not the provider’s exact token count or the size of the entire stored conversation.
+
+Persistent conversation navigation, a responsive mobile menu, cleaner message styling and a bottom composer. Chat sends update in place; failed drafts remain editable. Enter sends and Shift+Enter inserts a line break. Content additions remain in the in-app lorebook, not documented here to avoid spoilers.
+
 ## 0.4.0 — Bring your own API
 
 Open **Settings** to configure OpenRouter or any OpenAI-compatible API with `/models` and `/chat/completions`. Paid, free and local models are supported; model IDs are discovered from your endpoint, not a built-in list. Save the connection, choose a model, press **Load model controls**, then save the model and controls. All settings operations update in place without navigation; unsaved numeric drafts are retained per model while the page remains open.

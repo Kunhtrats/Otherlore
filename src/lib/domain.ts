@@ -30,9 +30,9 @@ export function buildPrompt(card: Card, lore: Lore[], memory: Memory, history: M
     if (tokens(content) <= cap && cost([...messages, m, ...selected, current]) <= limit) messages.push(m);
   };
   const query = [...history.slice(-4).map(m => m.content), input].join(' ').toLowerCase();
-  const ranked = lore.filter(entry => !entry.constant).map(entry => ({ entry, score: entry.keywords.filter(k => query.includes(k.toLowerCase())).length }))
+  const ranked = lore.filter(entry => !entry.constant).map(entry => ({ entry, score: entry.keywords.reduce((score, k) => score + (query.includes(k.toLowerCase()) ? 1 : 0) + (input.toLowerCase().includes(k.toLowerCase()) ? 3 : 0), 0) }))
     .filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
-  for (const { entry } of ranked) add(`[WORLD LORE — background, not omniscient character knowledge]\n${entry.content}`, Math.floor(limit * 0.08));
+  for (const { entry } of ranked) add(`[WORLD LORE — background, not omniscient character knowledge]\n${entry.content}`, Math.max(1100, Math.floor(limit * 0.08)));
   const visible = memory.facts.filter(f => f.knownBy.includes(card.name) || f.knownBy.includes('*'));
   const memoryCap = Math.floor(limit * 0.25);
   const memoryBlock = `[SYSTEM STATE — do not narrate directly]\nOnly use knowledge plausibly witnessed by ${card.name}.`;
